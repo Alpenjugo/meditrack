@@ -93,9 +93,7 @@ STYLE = """
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg); }
 main { max-width: 680px; margin: auto; padding: clamp(16px, 5vw, 40px); }
-header { display: flex; align-items: center; gap: .85rem; margin-bottom: 1.5rem; }
-.mark { display: grid; place-items: center; width: 48px; height: 48px; flex: none;
-    border-radius: 13px; background: var(--accent); color: white; font-size: 2rem; }
+header { margin-bottom: 1.25rem; }
 h1, h2, h3, p { margin: 0; overflow-wrap: anywhere; }
 h1 { font-size: clamp(1.7rem, 5vw, 2.35rem); letter-spacing: -.045em; }
 h2 { font-size: 1.15rem; margin-bottom: .6rem; }
@@ -105,35 +103,52 @@ header p, small, footer { color: var(--muted); }
     padding: 1rem; margin-bottom: .9rem; }
 .quick-action { margin-bottom: .75rem; }
 .quick-action > summary {
-    display: flex; align-items: center; gap: .8rem; padding: 1rem; min-height: 76px;
-    border-radius: 14px; background: var(--tile); color: var(--tile-fg);
+    display: flex; align-items: center; gap: .8rem; padding: .85rem 1rem; min-height: 58px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--tile); color: var(--tile-fg);
     font-size: clamp(1.1rem, 4vw, 1.4rem); font-weight: 700; list-style: none;
 }
 .quick-action > summary::-webkit-details-marker { display: none; }
-.quick-action > summary::after { content: "›"; margin-left: auto; font-size: 1.6rem; }
-.quick-action[open] > summary::after { transform: rotate(90deg); }
+.quick-action > summary::after {
+    content: ""; flex: none; width: .45rem; height: .45rem; margin-left: auto;
+    border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.quick-action[open] > summary::after { transform: rotate(225deg); }
 .quick-action > .card { margin: .4rem 0 0; }
-.action-icon { font-size: 1.55rem; }
 form { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; margin: .65rem 0 0; }
-label { display: grid; gap: .3rem; flex: 1 1 150px; font-size: .9rem; }
+label { display: grid; gap: .3rem; flex: 1 1 150px; min-width: 0; font-size: .9rem; }
 input, button, select, textarea { font: inherit; padding: .55rem .7rem; border: 1px solid var(--border);
-    border-radius: 8px; min-width: 0; min-height: 44px; }
+    border-radius: 8px; min-width: 0; min-height: 44px; font-size: 1rem; }
+label > :is(input, select, textarea) { width: 100%; }
+textarea { resize: vertical; }
+:where(summary, input, select, textarea, button):focus-visible {
+    outline: 2px solid currentColor; outline-offset: 3px;
+}
 .medicine-note { white-space: pre-wrap; }
 button { background: var(--accent); color: white; cursor: pointer; }
 button:disabled { opacity: .55; cursor: default; }
 summary { cursor: pointer; }
+.card > summary, .settings > summary { min-height: 44px; padding-block: .6rem; }
 .settings { margin-top: .65rem; }
 .child-picker { margin: 0 0 1rem; align-items: end; }
 .badge { display: inline-block; padding: .25rem .6rem; border-radius: 8px;
     margin: .5rem 0 .15rem; background: var(--tile); color: var(--tile-fg); }
 .wait { background: var(--wait); color: var(--wait-fg); }
 .entries { list-style: none; margin: 0; padding: 0; }
-.entries li { display: grid; grid-template-columns: 3.3rem minmax(0, 1fr); gap: .75rem;
+.entries li { display: grid; grid-template-columns: minmax(max-content, 5rem) minmax(0, 1fr); gap: .75rem;
     padding: .55rem 0; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
-.entries time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.history-day { margin: .75rem 0 .35rem; color: var(--muted); font-size: .9rem; }
+.entries time { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
 .alert { margin-bottom: 1rem; padding: .85rem; border-radius: 8px;
     background: var(--wait); color: var(--wait-fg); }
 footer { font-size: .85rem; }
+@media (max-width: 520px) {
+    main { padding: 12px 12px max(20px, env(safe-area-inset-bottom)); }
+    .card { padding: .8rem; }
+    form:not(.child-picker) { display: grid; grid-template-columns: minmax(0, 1fr); }
+    form:not(.child-picker) > button { width: 100%; }
+    .child-picker label { flex: 1 1 0; }
+}
 """
 
 
@@ -192,7 +207,7 @@ def local_time(timestamp, zone):
 
 
 def format_time(timestamp, zone):
-    return local_time(timestamp, zone).strftime("%d.%m.%Y, %H:%M %Z")
+    return local_time(timestamp, zone).strftime("%d.%m.%Y, %H:%M Uhr")
 
 
 def dose_status(db, medicine, now, zone):
@@ -328,8 +343,7 @@ def render(db, now, zone, token, error="", selected="", open_action="", template
     note = '<label>Notiz (optional)<input name="note" maxlength="240"></label>'
     parts = [
         f'<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MediTrack</title><style>{STYLE}</style><main>',
-        '<header><span class="mark" aria-hidden="true">+</span><div><h1>MediTrack</h1>'
-        '<p>Fieber- und Medikamenten-Tracker</p></div></header>',
+        '<header><h1>MediTrack</h1></header>',
     ]
     parts.append('<datalist id="formulations"><option value="Tropfen"><option value="Sirup">'
                  '<option value="Zäpfchen"><option value="Tablette"><option value="Saft">'
@@ -355,11 +369,11 @@ def render(db, now, zone, token, error="", selected="", open_action="", template
         ).fetchall()
         statuses = [(med, *dose_status(db, med, now, zone)) for med in medicines]
         opened = " open" if open_action == "temperature" else ""
-        parts.append(f'<details class="quick-action"{opened}><summary><span class="action-icon" aria-hidden="true">🌡</span>Temperatur erfassen</summary><div class="card">')
+        parts.append(f'<details class="quick-action"{opened}><summary>Temperatur erfassen</summary><div class="card">')
         parts.append(form("temperature", '<label>Temperatur (°C)<input name="temperature" inputmode="decimal" maxlength="5" required></label>' + note, "Messung speichern", child=child_id))
         parts.append('</div></details>')
         opened = " open" if open_action == "dose" else ""
-        parts.append(f'<details class="quick-action"{opened}><summary><span class="action-icon" aria-hidden="true">💊</span>Gabe erfassen</summary><div class="card">')
+        parts.append(f'<details class="quick-action"{opened}><summary>Gabe erfassen</summary><div class="card">')
         if not medicines:
             parts.append('<p>Für dieses Kind ist noch kein Medikament hinterlegt.</p>')
         for med, _, next_time in statuses:
@@ -392,14 +406,20 @@ def render(db, now, zone, token, error="", selected="", open_action="", template
             ORDER BY timestamp DESC, kind DESC, id DESC LIMIT 50
         """, (child_id, child_id)).fetchall()
         if entries:
-            parts.append('<ul class="entries">')
+            today = local_time(now, zone).date()
+            day = None
             for entry in entries:
                 label = entry["name"] if entry["kind"] else f'{entry["tenths"] / 10:.1f}'.replace(".", ",") + " °C"
                 recorded = local_time(entry["timestamp"], zone)
-                date = "" if recorded.date() == local_time(now, zone).date() else recorded.strftime("%d.%m.%Y · ")
+                if recorded.date() != day:
+                    if day is not None:
+                        parts.append("</ul>")
+                    day = recorded.date()
+                    prefix = "Heute · " if day == today else ""
+                    parts.append(f'<h3 class="history-day">{prefix}{day:%d.%m.%Y}</h3><ul class="entries">')
                 suffix = f'<br><small>{escape(entry["note"])}</small>' if entry["note"] else ""
-                parts.append(f'<li><time datetime="{recorded.isoformat()}">{recorded:%H:%M}</time>'
-                             f'<div>{date}<strong>{escape(label)}</strong>{suffix}</div></li>')
+                parts.append(f'<li><time datetime="{recorded.isoformat()}">{recorded:%H:%M} Uhr</time>'
+                             f'<div><strong>{escape(label)}</strong>{suffix}</div></li>')
             parts.append('</ul>')
         else:
             parts.append('<p>Noch keine Einträge.</p>')
