@@ -16,7 +16,7 @@ Die App speichert die Einträge lokal in ihrer SQLite-Datenbank unter `/data`. F
 ## Einträge und Regeln
 
 - Ein Kind per Name oder Kürzel anlegen.
-- Für das Kind ein Medikament mit Mindestabstand in Minuten und maximaler Anzahl Gaben pro Kalendertag erfassen.
+- Für das Kind ein Medikament mit Mindestabstand in Stunden (z. B. 1,5 für 90 Minuten, minutengenau gerundet) und maximaler Anzahl Gaben pro Kalendertag erfassen.
 - Temperatur oder Medikamentengabe direkt zum aktuellen Zeitpunkt mit optionaler Notiz erfassen. Die letzten 50 Einträge pro Kind erscheinen im Verlauf.
 - Bei erreichtem Tageslimit oder zu kurzem Abstand blockiert MediTrack weitere Gaben-Einträge und zeigt den nächsten möglichen Zeitpunkt an. Das Tageslimit wird um Mitternacht in der eingestellten Zeitzone zurückgesetzt. Der Mindestabstand gilt auch über Mitternacht hinweg.
 

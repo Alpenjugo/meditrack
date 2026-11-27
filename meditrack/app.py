@@ -1,10 +1,11 @@
 import argparse
 import json
+import re
 import secrets
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from html import escape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -140,6 +141,21 @@ def number(value, low, high):
     return result
 
 
+def hours_to_minutes(value):
+    value = value.strip().replace(",", ".")
+    if re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,4})?", value):
+        hours = Decimal(value)
+        minutes = int((hours * 60).to_integral_value(rounding=ROUND_HALF_UP))
+        if Decimal("0.0167") <= hours <= 168:
+            return minutes
+    raise ValueError("Bitte einen Mindestabstand von 0,0167 bis 168 Stunden eingeben (z. B. 1,5).")
+
+
+def format_hours(minutes):
+    value = Decimal(minutes) / 60
+    return f"{value:.4f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
 def local_time(timestamp, zone):
     return datetime.fromtimestamp(timestamp, zone)
 
@@ -179,7 +195,7 @@ def save(db, values, now, zone):
         elif action in {"medicine", "edit_medicine"}:
             settings = (
                 clean(field("name"), 80, True),
-                number(field("interval"), 1, 10080),
+                hours_to_minutes(field("interval_hours")),
                 number(field("limit"), 1, 99),
             )
             if action == "medicine":
@@ -232,7 +248,7 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
     def medicine_fields(name="", interval="", limit=""):
         return (
             f'<label>Medikament<input name="name" maxlength="80" value="{escape(name)}" required></label>'
-            f'<label>Mindestabstand (Minuten)<input name="interval" type="number" min="1" max="10080" value="{interval}" required></label>'
+            f'<label>Mindestabstand (Stunden)<input name="interval_hours" inputmode="decimal" maxlength="8" placeholder="z. B. 1,5" value="{interval}" required></label>'
             f'<label>Max. Gaben pro Kalendertag<input name="limit" type="number" min="1" max="99" value="{limit}" required></label>'
         )
 
@@ -282,11 +298,11 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
             status = f'Frühestens {format_time(next_time, zone)}' if waiting else 'Eintrag möglich'
             badge = "badge wait" if waiting else "badge"
             parts.append(f'<article class="card"><h3>{escape(med["name"])}</h3>'
-                         f'<p>{count} von {med["daily_limit"]} Gaben heute · {med["interval_minutes"]} Min. Abstand</p>'
+                         f'<p>{count} von {med["daily_limit"]} Gaben heute · {format_hours(med["interval_minutes"])} Std. Abstand</p>'
                          f'<p class="{badge}">{escape(status)}</p>')
             opened = " open" if open_action == "edit_medicine" else ""
             parts.append(f'<details class="settings"{opened}><summary>Medikament bearbeiten</summary>')
-            parts.append(form("edit_medicine", medicine_fields(med["name"], med["interval_minutes"], med["daily_limit"]), "Speichern", medicine=med["id"]))
+            parts.append(form("edit_medicine", medicine_fields(med["name"], format_hours(med["interval_minutes"]), med["daily_limit"]), "Speichern", medicine=med["id"]))
             parts.append("</details></article>")
 
         parts.append('<section class="card"><h2>Zuletzt erfasst</h2>')

@@ -11,10 +11,19 @@ from urllib.parse import urlencode
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
-from app import SCHEMA, connect, dose_status, save
+from app import SCHEMA, connect, dose_status, format_hours, hours_to_minutes, save
 
 
 class DoseRulesTest(unittest.TestCase):
+    def test_hour_input_preserves_existing_minute_values(self):
+        for minutes in range(1, 10081):
+            self.assertEqual(hours_to_minutes(format_hours(minutes)), minutes)
+        self.assertEqual(hours_to_minutes("1,5"), 90)
+        self.assertEqual(hours_to_minutes("1.5"), 90)
+        for invalid in ("0", "-1", "NaN", "169"):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                hours_to_minutes(invalid)
+
     def test_daily_limit_and_interval_across_midnight(self):
         zone = ZoneInfo("Europe/Zurich")
         now = int(datetime(2026, 10, 24, 23, 30, tzinfo=zone).timestamp())
@@ -75,7 +84,7 @@ class AppTest(unittest.TestCase):
                 self.assertIn("Alex", request(csrf=token, action="child", name="Alex"))
                 self.assertIn("Testmedizin", request(
                     csrf=token, action="medicine", child=1,
-                    name="Testmedizin", interval=120, limit=2,
+                    name="Testmedizin", interval_hours="1,5", limit=2,
                 ))
                 self.assertIn("39,2 °C", request(
                     csrf=token, action="temperature", child=1, temperature="39,2",
@@ -92,6 +101,7 @@ class AppTest(unittest.TestCase):
                 self.assertIn("Temperatur erfassen", page)
                 self.assertIn("Gabe erfassen", page)
                 self.assertIn("Zuletzt erfasst", page)
+                self.assertIn("1,5 Std. Abstand", page)
 
                 request(csrf=token, action="child", name="Noah")
                 page = request("?kind=2")
