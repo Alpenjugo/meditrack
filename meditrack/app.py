@@ -23,13 +23,19 @@ CREATE TABLE IF NOT EXISTS medicines (
     name TEXT NOT NULL COLLATE NOCASE,
     interval_minutes INTEGER NOT NULL,
     daily_limit INTEGER NOT NULL,
+    active_ingredient TEXT NOT NULL DEFAULT '',
+    formulation TEXT NOT NULL DEFAULT '',
+    medicine_note TEXT NOT NULL DEFAULT '',
     UNIQUE(child, name)
 );
 CREATE TABLE IF NOT EXISTS medicine_catalog (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     interval_minutes INTEGER NOT NULL,
-    daily_limit INTEGER NOT NULL
+    daily_limit INTEGER NOT NULL,
+    active_ingredient TEXT NOT NULL DEFAULT '',
+    formulation TEXT NOT NULL DEFAULT '',
+    medicine_note TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS doses (
     id INTEGER PRIMARY KEY,
@@ -47,6 +53,13 @@ CREATE TABLE IF NOT EXISTS temperatures (
 );
 CREATE INDEX IF NOT EXISTS temperature_times ON temperatures(child, measured_at);
 """
+
+MEDICINE_TEMPLATES = {
+    "cetirizin": "Cetirizin",
+    "ibuprofen": "Ibuprofen",
+    "macrogol": "Macrogol",
+    "paracetamol": "Paracetamol",
+}
 
 STYLE = """
 :root {
@@ -103,8 +116,9 @@ header p, small, footer { color: var(--muted); }
 .action-icon { font-size: 1.55rem; }
 form { display: flex; flex-wrap: wrap; align-items: end; gap: .65rem; margin: .65rem 0 0; }
 label { display: grid; gap: .3rem; flex: 1 1 150px; font-size: .9rem; }
-input, button, select { font: inherit; padding: .55rem .7rem; border: 1px solid var(--border);
+input, button, select, textarea { font: inherit; padding: .55rem .7rem; border: 1px solid var(--border);
     border-radius: 8px; min-width: 0; min-height: 44px; }
+.medicine-note { white-space: pre-wrap; }
 button { background: var(--accent); color: white; cursor: pointer; }
 button:disabled { opacity: .55; cursor: default; }
 summary { cursor: pointer; }
@@ -128,6 +142,17 @@ def connect(path):
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     return db
+
+
+def initialize_database(db):
+    db.executescript(SCHEMA)
+    with db:
+        db.execute("BEGIN IMMEDIATE")
+        for table in ("medicines", "medicine_catalog"):
+            columns = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+            for column in ("active_ingredient", "formulation", "medicine_note"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
 
 
 def clean(value, maximum, required=False):
@@ -203,35 +228,38 @@ def save(db, values, now, zone):
                 clean(field("name"), 80, True),
                 hours_to_minutes(field("interval_hours")),
                 number(field("limit"), 1, 99),
+                clean(field("active_ingredient"), 120),
+                clean(field("formulation"), 80),
+                clean(field("medicine_note"), 500),
             )
             if action == "catalog_add":
                 db.execute(
-                    "INSERT INTO medicine_catalog(name, interval_minutes, daily_limit) VALUES (?, ?, ?)",
+                    "INSERT INTO medicine_catalog(name, interval_minutes, daily_limit, active_ingredient, formulation, medicine_note) VALUES (?, ?, ?, ?, ?, ?)",
                     settings,
                 )
             elif action == "catalog_edit":
                 result = db.execute(
-                    "UPDATE medicine_catalog SET name = ?, interval_minutes = ?, daily_limit = ? WHERE id = ?",
+                    "UPDATE medicine_catalog SET name = ?, interval_minutes = ?, daily_limit = ?, active_ingredient = ?, formulation = ?, medicine_note = ? WHERE id = ?",
                     (*settings, int(field("catalog_id"))),
                 )
                 if result.rowcount != 1:
                     raise ValueError("Medikament im Katalog nicht gefunden.")
             elif action == "medicine":
                 db.execute(
-                    "INSERT INTO medicines(name, interval_minutes, daily_limit, child) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO medicines(name, interval_minutes, daily_limit, active_ingredient, formulation, medicine_note, child) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (*settings, int(field("child"))),
                 )
             else:
                 result = db.execute(
-                    "UPDATE medicines SET name = ?, interval_minutes = ?, daily_limit = ? WHERE id = ?",
+                    "UPDATE medicines SET name = ?, interval_minutes = ?, daily_limit = ?, active_ingredient = ?, formulation = ?, medicine_note = ? WHERE id = ?",
                     (*settings, int(field("medicine"))),
                 )
                 if result.rowcount != 1:
                     raise ValueError("Medikament nicht gefunden.")
         elif action == "catalog_assign":
             result = db.execute("""
-                INSERT INTO medicines(child, name, interval_minutes, daily_limit)
-                SELECT ?, name, interval_minutes, daily_limit FROM medicine_catalog WHERE id = ?
+                INSERT INTO medicines(child, name, interval_minutes, daily_limit, active_ingredient, formulation, medicine_note)
+                SELECT ?, name, interval_minutes, daily_limit, active_ingredient, formulation, medicine_note FROM medicine_catalog WHERE id = ?
             """, (int(field("child")), int(field("catalog_id"))))
             if result.rowcount != 1:
                 raise ValueError("Medikament im Katalog nicht gefunden.")
@@ -261,7 +289,7 @@ def save(db, values, now, zone):
             raise ValueError("Unbekannte Aktion.")
 
 
-def render(db, now, zone, token, error="", selected="", open_action=""):
+def render(db, now, zone, token, error="", selected="", open_action="", template=""):
     def form(action, content, button, **fields):
         hidden = {"csrf": token, "action": action, **fields}
         inputs = "".join(
@@ -270,12 +298,32 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
         )
         return f'<form method="post">{inputs}{content}<button type="submit">{button}</button></form>'
 
-    def medicine_fields(name="", interval="", limit=""):
+    def medicine_fields(medicine=None, *, template_name=""):
+        if medicine is None:
+            name = active_ingredient = template_name
+            interval = limit = formulation = medicine_note = ""
+        else:
+            name = medicine["name"]
+            interval = format_hours(medicine["interval_minutes"])
+            limit = medicine["daily_limit"]
+            active_ingredient = medicine["active_ingredient"]
+            formulation = medicine["formulation"]
+            medicine_note = medicine["medicine_note"]
         return (
             f'<label>Medikament<input name="name" maxlength="80" value="{escape(name)}" required></label>'
+            f'<label>Wirkstoff<input name="active_ingredient" maxlength="120" value="{escape(active_ingredient)}"></label>'
+            f'<label>Darreichungsform<input name="formulation" list="formulations" maxlength="80" value="{escape(formulation)}"></label>'
+            f'<label>Notizen zum Medikament<textarea name="medicine_note" maxlength="500" rows="2">{escape(medicine_note)}</textarea></label>'
             f'<label>Mindestabstand (Stunden)<input name="interval_hours" inputmode="decimal" maxlength="8" placeholder="z. B. 1,5" value="{interval}" required></label>'
             f'<label>Max. Gaben pro Kalendertag<input name="limit" type="number" min="1" max="99" value="{limit}" required></label>'
         )
+
+    def medicine_details(medicine):
+        details = " · ".join(filter(None, (medicine["active_ingredient"], medicine["formulation"])))
+        description = f'<p><small>{escape(details)}</small></p>' if details else ""
+        if medicine["medicine_note"]:
+            description += f'<p class="medicine-note">{escape(medicine["medicine_note"])}</p>'
+        return description
 
     note = '<label>Notiz (optional)<input name="note" maxlength="240"></label>'
     parts = [
@@ -283,6 +331,9 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
         '<header><span class="mark" aria-hidden="true">+</span><div><h1>MediTrack</h1>'
         '<p>Fieber- und Medikamenten-Tracker</p></div></header>',
     ]
+    parts.append('<datalist id="formulations"><option value="Tropfen"><option value="Sirup">'
+                 '<option value="Zäpfchen"><option value="Tablette"><option value="Saft">'
+                 '<option value="Kapsel"><option value="Suspension"></datalist>')
     if error:
         parts.append(f'<p class="alert" role="alert">{escape(error)}</p>')
     children = db.execute("SELECT * FROM children ORDER BY name, id").fetchall()
@@ -312,7 +363,7 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
         if not medicines:
             parts.append('<p>Für dieses Kind ist noch kein Medikament hinterlegt.</p>')
         for med, _, next_time in statuses:
-            parts.append(f'<h3>{escape(med["name"])}</h3>')
+            parts.append(f'<h3>{escape(med["name"])}</h3>' + medicine_details(med))
             if next_time > now:
                 parts.append(f'<p class="badge wait">Frühestens {format_time(next_time, zone)}</p>')
             else:
@@ -323,12 +374,12 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
             waiting = next_time > now
             status = f'Frühestens {format_time(next_time, zone)}' if waiting else 'Eintrag möglich'
             badge = "badge wait" if waiting else "badge"
-            parts.append(f'<article class="card"><h3>{escape(med["name"])}</h3>'
+            parts.append(f'<article class="card"><h3>{escape(med["name"])}</h3>{medicine_details(med)}'
                          f'<p>{count} von {med["daily_limit"]} Gaben heute · {format_hours(med["interval_minutes"])} Std. Abstand</p>'
                          f'<p class="{badge}">{escape(status)}</p>')
             opened = " open" if open_action == "edit_medicine" else ""
             parts.append(f'<details class="settings"{opened}><summary>Medikament bearbeiten</summary>')
-            parts.append(form("edit_medicine", medicine_fields(med["name"], format_hours(med["interval_minutes"]), med["daily_limit"]), "Speichern", medicine=med["id"]))
+            parts.append(form("edit_medicine", medicine_fields(med), "Speichern", medicine=med["id"]))
             parts.append("</details></article>")
 
         parts.append('<section class="card"><h2>Zuletzt erfasst</h2>')
@@ -377,18 +428,27 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
     parts.append(f'<details class="card"{opened}><summary>Kind hinzufügen</summary>')
     parts.append(form("child", '<label>Name oder Kürzel<input name="name" maxlength="80" required></label>', "Hinzufügen"))
     parts.append('</details>')
-    opened = " open" if open_action in {"catalog_add", "catalog_edit"} else ""
+    template_name = MEDICINE_TEMPLATES.get(template, "")
+    opened = " open" if template_name or open_action in {"catalog_add", "catalog_edit"} else ""
     parts.append(f'<details class="card"{opened}><summary>Globaler Medikamentenkatalog</summary>')
     parts.append('<p>Die Vorgaben werden beim Übernehmen für ein Kind kopiert und können dort angepasst werden.</p>')
     for item in catalog:
         parts.append(f'<details class="settings"><summary>{escape(item["name"])}</summary>')
         parts.append(form(
             "catalog_edit",
-            medicine_fields(item["name"], format_hours(item["interval_minutes"]), item["daily_limit"]),
+            medicine_fields(item),
             "Vorgaben speichern", catalog_id=item["id"],
         ))
         parts.append('</details>')
-    parts.append(form("catalog_add", medicine_fields(), "Global anlegen"))
+    parts.append('<h3>Medikament global anlegen</h3>')
+    parts.append('<form method="get"><label>Wirkstoff-Vorlage<select name="vorlage" required>'
+                 '<option value="">Auswählen</option>')
+    for key, name in MEDICINE_TEMPLATES.items():
+        active = " selected" if key == template else ""
+        parts.append(f'<option value="{key}"{active}>{name}</option>')
+    parts.append(f'</select></label><input type="hidden" name="kind" value="{escape(selected)}">'
+                 '<button type="submit">Vorlage laden</button></form>')
+    parts.append(form("catalog_add", medicine_fields(template_name=template_name), "Global anlegen"))
     parts.append(f'</details><footer>Kalendertage gelten in {escape(zone.key)}. Die App prüft deine Einstellungen. Sie berechnet keine Dosierung.</footer></main></html>')
     return "".join(parts).encode()
 
@@ -409,6 +469,7 @@ class Handler(BaseHTTPRequestHandler):
             body = render(
                 db, int(datetime.now(timezone.utc).timestamp()), self.server.zone,
                 self.server.token, error, self.selected_child(), open_action,
+                parse_qs(urlsplit(self.path).query).get("vorlage", [""])[0],
             )
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -468,7 +529,7 @@ def main():
     database = args.database or Path("meditrack.sqlite3" if args.local else "/data/meditrack.sqlite3")
     zone = ZoneInfo(args.timezone or settings.get("timezone", "Europe/Zurich"))
     with closing(connect(database)) as db:
-        db.executescript(SCHEMA)
+        initialize_database(db)
     with ThreadingHTTPServer(("127.0.0.1" if args.local else "0.0.0.0", args.port), Handler) as server:
         server.allowed_ip = "127.0.0.1" if args.local else "172.30.32.2"
         server.database = database

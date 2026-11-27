@@ -30,7 +30,7 @@ class DoseRulesTest(unittest.TestCase):
         with closing(connect(":memory:")) as db:
             db.executescript(SCHEMA)
             db.execute("INSERT INTO children VALUES (1, 'Alex')")
-            db.execute("INSERT INTO medicines VALUES (1, 1, 'Test', 120, 1)")
+            db.execute("INSERT INTO medicines(id, child, name, interval_minutes, daily_limit) VALUES (1, 1, 'Test', 120, 1)")
             db.commit()
             dose = {"action": ["dose"], "medicine": ["1"]}
             save(db, dose, now, zone)
@@ -48,7 +48,7 @@ class DoseRulesTest(unittest.TestCase):
         with closing(connect(":memory:")) as db:
             db.executescript(SCHEMA)
             db.execute("INSERT INTO children VALUES (1, 'Alex')")
-            db.execute("INSERT INTO medicines VALUES (1, 1, 'Test', 1, 1)")
+            db.execute("INSERT INTO medicines(id, child, name, interval_minutes, daily_limit) VALUES (1, 1, 'Test', 1, 1)")
             db.commit()
             save(db, {"action": ["dose"], "medicine": ["1"]}, now, zone)
             med = db.execute("SELECT * FROM medicines").fetchone()
@@ -112,11 +112,16 @@ class AppTest(unittest.TestCase):
                 self.assertIn("38,1 °C", page)
                 self.assertNotIn("38,1 °C", request("?kind=1"))
 
+                page = request("?vorlage=ibuprofen")
+                self.assertIn('name="active_ingredient" maxlength="120" value="Ibuprofen"', page)
                 page = request(csrf=token, action="catalog_add", name="Katalogmedizin",
-                               interval_hours="4", limit=3)
+                               interval_hours="4", limit=3, active_ingredient="Testwirkstoff",
+                               formulation="Sirup", medicine_note="Testnotiz zum Produkt")
                 self.assertIn("Aus dem Katalog", page)
                 page = request(csrf=token, action="catalog_assign", child=1, catalog_id=1)
                 self.assertIn("0 von 3 Gaben heute · 4 Std. Abstand", page)
+                self.assertIn("Testwirkstoff · Sirup", page)
+                self.assertIn("Testnotiz zum Produkt", page)
                 with self.assertRaises(HTTPError) as error:
                     request(csrf=token, action="catalog_assign", child=1, catalog_id=1)
                 self.assertEqual(error.exception.code, 400)
