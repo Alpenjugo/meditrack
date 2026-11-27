@@ -111,6 +111,20 @@ class AppTest(unittest.TestCase):
                 page = request("?kind=2", csrf=token, action="temperature", child=2, temperature="38,1")
                 self.assertIn("38,1 °C", page)
                 self.assertNotIn("38,1 °C", request("?kind=1"))
+
+                page = request(csrf=token, action="catalog_add", name="Katalogmedizin",
+                               interval_hours="4", limit=3)
+                self.assertIn("Aus dem Katalog", page)
+                page = request(csrf=token, action="catalog_assign", child=1, catalog_id=1)
+                self.assertIn("0 von 3 Gaben heute · 4 Std. Abstand", page)
+                with self.assertRaises(HTTPError) as error:
+                    request(csrf=token, action="catalog_assign", child=1, catalog_id=1)
+                self.assertEqual(error.exception.code, 400)
+                request(csrf=token, action="catalog_edit", catalog_id=1, name="Katalogmedizin",
+                        interval_hours="6", limit=2)
+                page = request("?kind=2", csrf=token, action="catalog_assign", child=2, catalog_id=1)
+                self.assertIn("0 von 2 Gaben heute · 6 Std. Abstand", page)
+                self.assertIn("0 von 3 Gaben heute · 4 Std. Abstand", request("?kind=1"))
             finally:
                 process.terminate()
                 process.wait(timeout=5)

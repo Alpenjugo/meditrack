@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS medicines (
     daily_limit INTEGER NOT NULL,
     UNIQUE(child, name)
 );
+CREATE TABLE IF NOT EXISTS medicine_catalog (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    interval_minutes INTEGER NOT NULL,
+    daily_limit INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS doses (
     id INTEGER PRIMARY KEY,
     medicine INTEGER NOT NULL REFERENCES medicines(id),
@@ -192,13 +198,25 @@ def save(db, values, now, zone):
         db.execute("BEGIN IMMEDIATE")
         if action == "child":
             db.execute("INSERT INTO children(name) VALUES (?)", (clean(field("name"), 80, True),))
-        elif action in {"medicine", "edit_medicine"}:
+        elif action in {"medicine", "edit_medicine", "catalog_add", "catalog_edit"}:
             settings = (
                 clean(field("name"), 80, True),
                 hours_to_minutes(field("interval_hours")),
                 number(field("limit"), 1, 99),
             )
-            if action == "medicine":
+            if action == "catalog_add":
+                db.execute(
+                    "INSERT INTO medicine_catalog(name, interval_minutes, daily_limit) VALUES (?, ?, ?)",
+                    settings,
+                )
+            elif action == "catalog_edit":
+                result = db.execute(
+                    "UPDATE medicine_catalog SET name = ?, interval_minutes = ?, daily_limit = ? WHERE id = ?",
+                    (*settings, int(field("catalog_id"))),
+                )
+                if result.rowcount != 1:
+                    raise ValueError("Medikament im Katalog nicht gefunden.")
+            elif action == "medicine":
                 db.execute(
                     "INSERT INTO medicines(name, interval_minutes, daily_limit, child) VALUES (?, ?, ?, ?)",
                     (*settings, int(field("child"))),
@@ -210,6 +228,13 @@ def save(db, values, now, zone):
                 )
                 if result.rowcount != 1:
                     raise ValueError("Medikament nicht gefunden.")
+        elif action == "catalog_assign":
+            result = db.execute("""
+                INSERT INTO medicines(child, name, interval_minutes, daily_limit)
+                SELECT ?, name, interval_minutes, daily_limit FROM medicine_catalog WHERE id = ?
+            """, (int(field("child")), int(field("catalog_id"))))
+            if result.rowcount != 1:
+                raise ValueError("Medikament im Katalog nicht gefunden.")
         elif action == "temperature":
             try:
                 value = Decimal(field("temperature").strip().replace(",", ".")) * 10
@@ -261,6 +286,7 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
     if error:
         parts.append(f'<p class="alert" role="alert">{escape(error)}</p>')
     children = db.execute("SELECT * FROM children ORDER BY name, id").fetchall()
+    catalog = db.execute("SELECT * FROM medicine_catalog ORDER BY name").fetchall()
     if children:
         child = next((row for row in children if str(row["id"]) == selected), children[0])
         child_id = child["id"]
@@ -327,14 +353,42 @@ def render(db, now, zone, token, error="", selected="", open_action=""):
         else:
             parts.append('<p>Noch keine Einträge.</p>')
         parts.append('</section>')
-        opened = " open" if not medicines or open_action == "medicine" else ""
+        opened = " open" if not medicines or open_action in {"medicine", "catalog_assign"} else ""
         parts.append(f'<details class="card"{opened}><summary>Medikament hinzufügen</summary>')
-        parts.append(form("medicine", medicine_fields(), "Hinzufügen", child=child_id))
+        available = db.execute("""
+            SELECT catalog.id, catalog.name FROM medicine_catalog AS catalog
+            WHERE NOT EXISTS (
+                SELECT 1 FROM medicines WHERE child = ? AND medicines.name = catalog.name
+            )
+            ORDER BY catalog.name
+        """, (child_id,)).fetchall()
+        if available:
+            options = "".join(
+                f'<option value="{item["id"]}">{escape(item["name"])}</option>' for item in available
+            )
+            parts.append(form(
+                "catalog_assign", f'<label>Aus dem Katalog<select name="catalog_id">{options}</select></label>',
+                "Für dieses Kind übernehmen", child=child_id,
+            ))
+        parts.append(form("medicine", medicine_fields(), "Nur für dieses Kind anlegen", child=child_id))
         parts.append('</details>')
 
     opened = " open" if not children or open_action == "child" else ""
     parts.append(f'<details class="card"{opened}><summary>Kind hinzufügen</summary>')
     parts.append(form("child", '<label>Name oder Kürzel<input name="name" maxlength="80" required></label>', "Hinzufügen"))
+    parts.append('</details>')
+    opened = " open" if open_action in {"catalog_add", "catalog_edit"} else ""
+    parts.append(f'<details class="card"{opened}><summary>Globaler Medikamentenkatalog</summary>')
+    parts.append('<p>Die Vorgaben werden beim Übernehmen für ein Kind kopiert und können dort angepasst werden.</p>')
+    for item in catalog:
+        parts.append(f'<details class="settings"><summary>{escape(item["name"])}</summary>')
+        parts.append(form(
+            "catalog_edit",
+            medicine_fields(item["name"], format_hours(item["interval_minutes"]), item["daily_limit"]),
+            "Vorgaben speichern", catalog_id=item["id"],
+        ))
+        parts.append('</details>')
+    parts.append(form("catalog_add", medicine_fields(), "Global anlegen"))
     parts.append(f'</details><footer>Kalendertage gelten in {escape(zone.key)}. Die App prüft deine Einstellungen. Sie berechnet keine Dosierung.</footer></main></html>')
     return "".join(parts).encode()
 
